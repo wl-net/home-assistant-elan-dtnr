@@ -1,0 +1,30 @@
+{
+  "entity": {
+    "button": {
+      "seek_up": { "default": "mdi:fast-forward" },
+      "seek_down": { "default": "mdi:rewind" },
+      "step_up": { "default": "mdi:chevron-right" },
+      "step_down": { "default": "mdi:chevron-left" }
+    },
+    "number": {
+      "fm_frequency": { "default": "mdi:radio-tower" },
+      "am_frequency": { "default": "mdi:radio-tower" }
+    },
+    "select": {
+      "preset": { "default": "mdi:radio" }
+    },
+    "sensor": {
+      "reception": {
+        "default": "mdi:signal",
+        "state": {
+          "no_signal": "mdi:signal-off",
+          "mono": "mdi:signal-cellular-2",
+          "stereo": "mdi:signal-cellular-3"
+        }
+      }
+    }
+  },
+  "services": {
+    "store_preset": { "service": "mdi:content-save" }
+  }
+}

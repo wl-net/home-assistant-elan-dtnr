@@ -1,0 +1,11 @@
+{
+  "domain": "elan_dtnr",
+  "name": "ELAN DTNR Dual Tuner",
+  "codeowners": [],
+  "config_flow": true,
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "loggers": ["custom_components.elan_dtnr"],
+  "requirements": ["serialx>=1.11.0"],
+  "version": "0.1.0"
+}

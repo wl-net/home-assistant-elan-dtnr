@@ -1,0 +1,14 @@
+store_preset:
+  target:
+    entity:
+      integration: elan_dtnr
+      domain: media_player
+  fields:
+    preset:
+      required: true
+      example: 5
+      selector:
+        number:
+          min: 1
+          max: 30
+          mode: box

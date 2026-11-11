@@ -1,0 +1,165 @@
+"""Polling coordinator for the ELAN DTNR."""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Callable
+from datetime import datetime
+import logging
+
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+
+from .client import DTNRClient, DTNRError
+from .const import (
+    DOMAIN,
+    POWER_POLL_INTERVAL,
+    POWER_TIMEOUT,
+    SCAN_INTERVAL,
+    SEEK_REFRESH_DELAY,
+    TUNERS,
+)
+from .protocol import TunerState, cmd_power
+
+_LOGGER = logging.getLogger(__name__)
+
+type ElanDtnrConfigEntry = ConfigEntry[ElanDtnrCoordinator]
+
+
+class ElanDtnrCoordinator(DataUpdateCoordinator[dict[int, TunerState]]):
+    """Polls both tuners and sends commands."""
+
+    config_entry: ElanDtnrConfigEntry
+
+    def __init__(
+        self, hass: HomeAssistant, entry: ElanDtnrConfigEntry, client: DTNRClient
+    ) -> None:
+        """Initialise."""
+        super().__init__(
+            hass,
+            _LOGGER,
+            config_entry=entry,
+            name=DOMAIN,
+            update_interval=SCAN_INTERVAL,
+        )
+        self.client = client
+        client.on_state = self._handle_unsolicited
+        self.unit_device_id: str | None = None  # device registry id of the unit
+        self._unsub_delayed_refresh: CALLBACK_TYPE | None = None
+        # Held across a whole poll and a whole command, so a command can't land
+        # between a poll's two queries and be overwritten by its stale half.
+        self._lock = asyncio.Lock()
+
+    async def _async_update_data(self) -> dict[int, TunerState]:
+        async with self._lock:
+            try:
+                return {tuner: await self.client.query(tuner) for tuner in TUNERS}
+            except DTNRError as err:
+                raise UpdateFailed(str(err)) from err
+
+    @callback
+    def _handle_unsolicited(self, state: TunerState) -> None:
+        """Take status lines the tuner sends without being asked."""
+        if self.data is not None:
+            self.async_set_updated_data({**self.data, state.tuner: state})
+
+    async def async_tuner_command(
+        self,
+        tuner: int,
+        build: Callable[[TunerState], str],
+        *,
+        power_on: bool = True,
+        slow: bool = False,
+    ) -> None:
+        """Send a command built from the tuner's current state, then re-read it.
+
+        The state passed to ``build`` is always freshly queried, never the last
+        poll's. With ``power_on`` the tuner is switched on first if needed.
+        ``slow`` adds a later refresh for commands such as seek that take a
+        while.
+        """
+        async with self._lock:
+            try:
+                if power_on:
+                    state = await self._async_power(tuner, True)
+                else:
+                    state = await self.client.query(tuner)
+                command = build(state)
+                await self.client.send(command)
+            except DTNRError as err:
+                raise HomeAssistantError(f"Error talking to the DTNR: {err}") from err
+            except ValueError as err:
+                raise ServiceValidationError(str(err)) from err
+            try:
+                fresh: TunerState | None = await self.client.query(tuner)
+            except DTNRError as err:
+                # The command went out; only the read-back failed.
+                _LOGGER.debug("Re-reading tuner %s after %s failed: %s", tuner, command, err)
+                fresh = None
+            if fresh is not None:
+                self.async_set_updated_data({**self.data, tuner: fresh})
+        if fresh is None:
+            await self.async_request_refresh()
+        if slow:
+            self._schedule_delayed_refresh()
+
+    async def async_set_power(self, tuner: int, on: bool) -> None:
+        """Switch a tuner on or off, and show it once the tuner reports it."""
+        async with self._lock:
+            try:
+                state = await self._async_power(tuner, on)
+            except DTNRError as err:
+                raise HomeAssistantError(f"Error talking to the DTNR: {err}") from err
+            self.async_set_updated_data({**self.data, tuner: state})
+
+    async def _async_power(self, tuner: int, on: bool) -> TunerState:
+        """Switch a tuner on or off if it isn't already, and wait until it says so.
+
+        It asks rather than trusting the last poll, since the tuner may have
+        been switched from its front panel or IR since, and it ignores tuning
+        while off. It keeps asking after X1/X2 because the tuner may take a
+        moment to come on, so the first answer can still be X0.
+        """
+        state = await self.client.query(tuner)
+        if state.power == on:
+            return state
+        await self.client.send(cmd_power(tuner, on))
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + POWER_TIMEOUT
+        while True:
+            state = await self.client.query(tuner)
+            if state.power == on or loop.time() >= deadline:
+                break
+            await asyncio.sleep(POWER_POLL_INTERVAL)
+        if state.power != on:
+            raise HomeAssistantError(
+                f"Tuner {tuner} did not turn {'on' if on else 'off'}"
+            )
+        return state
+
+    @callback
+    def _schedule_delayed_refresh(self) -> None:
+        if self._unsub_delayed_refresh is not None:
+            self._unsub_delayed_refresh()
+
+        @callback
+        def _refresh(_now: datetime) -> None:
+            self._unsub_delayed_refresh = None
+            self.config_entry.async_create_background_task(
+                self.hass, self.async_request_refresh(), "elan_dtnr delayed refresh"
+            )
+
+        self._unsub_delayed_refresh = async_call_later(
+            self.hass, SEEK_REFRESH_DELAY, _refresh
+        )
+
+    async def async_shutdown(self) -> None:
+        """Stop polling and close the connection."""
+        await super().async_shutdown()
+        if self._unsub_delayed_refresh is not None:
+            self._unsub_delayed_refresh()
+            self._unsub_delayed_refresh = None
+        await self.client.disconnect()

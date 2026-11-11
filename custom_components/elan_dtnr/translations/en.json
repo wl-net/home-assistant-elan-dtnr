@@ -1,0 +1,62 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "ELAN DTNR",
+        "description": "Pick the DTNR's serial port, or type a TCP serial bridge as socket://HOST:PORT (for an stunnel client, ser2net or similar). The tuner runs at 19200 baud, 8N1.",
+        "data": {
+          "device": "Serial port or socket:// URL",
+          "name": "Name"
+        },
+        "data_description": {
+          "device": "For example /dev/serial/by-id/usb-…, or socket://127.0.0.1:2001."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Couldn't open the port or connect to the bridge.",
+      "no_response": "Connected, but the DTNR didn't answer a query. Check the cable (straight-through, not null-modem), the baud rate on any bridge (19200) and that the unit is powered.",
+      "unknown": "Unexpected error; see the log."
+    },
+    "abort": {
+      "already_configured": "This port is already set up."
+    }
+  },
+  "entity": {
+    "button": {
+      "seek_up": { "name": "Seek up" },
+      "seek_down": { "name": "Seek down" },
+      "step_up": { "name": "Step up" },
+      "step_down": { "name": "Step down" }
+    },
+    "number": {
+      "fm_frequency": { "name": "FM frequency" },
+      "am_frequency": { "name": "AM frequency" }
+    },
+    "select": {
+      "preset": { "name": "Preset" }
+    },
+    "sensor": {
+      "reception": {
+        "name": "Reception",
+        "state": {
+          "no_signal": "No signal",
+          "mono": "Mono",
+          "stereo": "Stereo"
+        }
+      }
+    }
+  },
+  "services": {
+    "store_preset": {
+      "name": "Store preset",
+      "description": "Stores the station the tuner is on in one of its 30 presets for the current band.",
+      "fields": {
+        "preset": {
+          "name": "Preset",
+          "description": "Preset number, 1 to 30."
+        }
+      }
+    }
+  }
+}
