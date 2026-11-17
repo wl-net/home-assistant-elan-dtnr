@@ -4,24 +4,20 @@ on:
   push:
     tags: ["v*"]
 
-permissions:
-  contents: write
+# Nothing gets write access by default; only the publish job asks for it.
+permissions: {}
 
 jobs:
-  release:
+  test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
-
-      - name: Test
-        run: |
-          python -m venv .venv
-          .venv/bin/pip install pytest-homeassistant-custom-component serialx
-          .venv/bin/pytest
 
       - name: Check the tag matches manifest.json
         run: |
@@ -32,6 +28,22 @@ jobs:
               sys.exit(f"Tag is {sys.argv[1]} but manifest.json says {version}: bump the manifest, commit, and retag.")
           PY
 
+      - name: Test
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install pytest-homeassistant-custom-component serialx==1.11.0
+          .venv/bin/pytest
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # No third-party packages are installed in this job, which holds the
+      # write token: it only zips the committed files and publishes them.
       - name: Build the zip
         run: |
           cd custom_components/elan_dtnr
