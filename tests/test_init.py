@@ -160,6 +160,22 @@ async def test_power_on_gives_up(
         )
 
 
+async def test_power_on_gave_up_then_unit_comes_on(
+    hass: HomeAssistant, entry: MockConfigEntry, fake: FakeDTNR
+) -> None:
+    """A late unit shows as on at the refresh after the failed command."""
+    fake.set_power(False)
+    fake.power_on_delay = 0.8  # past POWER_TIMEOUT (0.5 in the tests)
+    with pytest.raises(HomeAssistantError, match="did not turn on"):
+        await hass.services.async_call(
+            "switch", "turn_on", {ATTR_ENTITY_ID: POWER}, blocking=True
+        )
+    await asyncio.sleep(0.6)
+    await _advance(hass, 11)
+    assert hass.states.get(POWER).state == "on"
+    assert hass.states.get(T2).state == STATE_PLAYING
+
+
 async def test_play_media_powers_on_and_tunes(
     hass: HomeAssistant, entry: MockConfigEntry, fake: FakeDTNR
 ) -> None:

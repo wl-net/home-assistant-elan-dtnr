@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Test
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install pytest-homeassistant-custom-component serialx
+          .venv/bin/pytest
+
+      - name: Stamp the tag into manifest.json and build the zip
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          python - "$version" <<'PY'
+          import json, sys
+          path = "custom_components/elan_dtnr/manifest.json"
+          manifest = json.load(open(path))
+          manifest["version"] = sys.argv[1]
+          json.dump(manifest, open(path, "w"), indent=2)
+          open(path, "a").write("\n")
+          PY
+          cd custom_components/elan_dtnr
+          zip -r ../../elan_dtnr.zip . -x "__pycache__/*" "*.pyc"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" elan_dtnr.zip \
+            --title "$GITHUB_REF_NAME" --generate-notes

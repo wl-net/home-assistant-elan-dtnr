@@ -7,5 +7,5 @@
   "iot_class": "local_polling",
   "loggers": ["custom_components.elan_dtnr"],
   "requirements": ["serialx>=1.11.0"],
-  "version": "0.1.0"
+  "version": "0.2.0"
 }

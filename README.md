@@ -30,6 +30,14 @@ front-panel changes by itself, so they show up at the next poll, and a seek
 shows only where it stopped. (If a unit does send status lines on its own, the
 integration uses them.)
 
+## Upgrading from 0.1.0
+
+Power moved from the tuners to the unit. The tuner media players no longer
+support `media_player.turn_on`/`turn_off`, and they report `playing` instead of
+`on` while the unit is on (`off` is unchanged). Use `switch.<name>_power` to
+switch the unit, and update any automation that calls those services or
+triggers on a tuner's `on` state.
+
 ## Connecting the tuner
 
 The DTNR's DB9 is **female**, wired as DCE (pin 2 TX out, pin 3 RX in, pin 5
@@ -162,7 +170,7 @@ take each other's replies.
 
 The protocol is from the DTNR Installation & User Manual, "RS232 Protocol":
 `T<tuner>B<band>…<CR>` commands, `Q1`/`Q2` queries, and replies like
-`T1B2P00F1067S00` or `X0` when the tuner is off. FM is 4 digits in 100 kHz
+`T1B2P00F1067S00`, or `X0` when the unit is off. FM is 4 digits in 100 kHz
 units, AM is 4 digits in kHz.
 
 Checked on a real unit (November 2026):

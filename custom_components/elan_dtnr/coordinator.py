@@ -81,9 +81,9 @@ class ElanDtnrCoordinator(DataUpdateCoordinator[dict[int, TunerState]]):
         which brings both tuners on. ``slow`` adds a later refresh for commands
         such as seek that take a while.
         """
-        switched = False
         async with self._lock:
             try:
+                switched = False
                 if power_on:
                     state, switched = await self._async_power(True, tuner)
                 else:
@@ -91,19 +91,26 @@ class ElanDtnrCoordinator(DataUpdateCoordinator[dict[int, TunerState]]):
                 command = build(state)
                 await self.client.send(command)
             except DTNRError as err:
+                self._refresh_in_background()
                 raise HomeAssistantError(f"Error talking to the DTNR: {err}") from err
+            except HomeAssistantError:
+                # The unit may have come on after we gave up waiting.
+                self._refresh_in_background()
+                raise
             except ValueError as err:
                 raise ServiceValidationError(str(err)) from err
             try:
-                fresh: TunerState | None = await self.client.query(tuner)
+                states = {tuner: await self.client.query(tuner)}
+                if switched:
+                    # Switching the unit on brought the other tuner on too.
+                    states.update(await self._query_others(tuner))
             except DTNRError as err:
                 # The command went out; only the read-back failed.
-                _LOGGER.debug("Re-reading tuner %s after %s failed: %s", tuner, command, err)
-                fresh = None
-            if fresh is not None:
-                self.async_set_updated_data({**self.data, tuner: fresh})
-        # Switching the unit on brought the other tuner on too.
-        if fresh is None or switched:
+                _LOGGER.debug("Re-reading after %s failed: %s", command, err)
+                states = {}
+            if states:
+                self.async_set_updated_data({**self.data, **states})
+        if not states:
             await self.async_request_refresh()
         if slow:
             self._schedule_delayed_refresh()
@@ -112,11 +119,26 @@ class ElanDtnrCoordinator(DataUpdateCoordinator[dict[int, TunerState]]):
         """Switch the unit, both tuners, on or off; show it once it reports it."""
         async with self._lock:
             try:
-                await self._async_power(on)
-                states = {tuner: await self.client.query(tuner) for tuner in TUNERS}
+                state, _ = await self._async_power(on)
+                states = {TUNERS[0]: state, **await self._query_others(TUNERS[0])}
             except DTNRError as err:
+                self._refresh_in_background()
                 raise HomeAssistantError(f"Error talking to the DTNR: {err}") from err
+            except HomeAssistantError:
+                self._refresh_in_background()
+                raise
             self.async_set_updated_data({**self.data, **states})
+
+    async def _query_others(self, tuner: int) -> dict[int, TunerState]:
+        """Query every tuner but the one already read."""
+        return {other: await self.client.query(other) for other in TUNERS if other != tuner}
+
+    @callback
+    def _refresh_in_background(self) -> None:
+        """Re-read both tuners once the lock is free, bypassing the debouncer."""
+        self.config_entry.async_create_background_task(
+            self.hass, self.async_refresh(), "elan_dtnr refresh after failure"
+        )
 
     async def _async_power(
         self, on: bool, tuner: int = TUNERS[0]
