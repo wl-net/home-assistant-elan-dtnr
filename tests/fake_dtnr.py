@@ -1,7 +1,9 @@
 """A TCP emulator of the DTNR's RS-232 protocol, as the manual describes it.
 
 It stands in for the tuner behind a socket:// bridge. It checks the
-integration against the documented protocol, not against real hardware.
+integration against the documented protocol, not against real hardware,
+except for power, which follows a real unit: a bare X1/X0 switches both
+tuners, and T1X1, T1X2, T1X0 and X2 do nothing.
 """
 
 from __future__ import annotations
@@ -72,6 +74,13 @@ class FakeDTNR:
         self._writers.clear()
         await asyncio.sleep(0.05)
 
+    def set_power(self, on: bool) -> None:
+        """Switch the unit, both tuners, as X1/X0 do."""
+        for tuner in self.tuners.values():
+            if on and not tuner.power:
+                tuner.ready_at = time.monotonic() + self.power_on_delay
+            tuner.power = on
+
     async def _serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         self.connections += 1
         self._writers.add(writer)
@@ -100,16 +109,16 @@ class FakeDTNR:
             if letter == "T":
                 ctx = value
                 continue
+            if letter == "X":
+                if ctx is None and value in (0, 1):
+                    self.set_power(value == 1)
+                continue
             if ctx is None:
                 continue
             t = self.tuners[ctx]
-            if letter == "X":
-                if value == 1 and not t.power:
-                    t.ready_at = time.monotonic() + self.power_on_delay
-                t.power = value == 1
-            elif not t.on:
+            if not t.on:
                 continue
-            elif letter == "B":
+            if letter == "B":
                 if value != t.band:
                     t.band, t.preset = value, 0
             elif letter == "F":

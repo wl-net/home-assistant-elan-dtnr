@@ -36,9 +36,10 @@ from custom_components.elan_dtnr.protocol import (
         (cmd_preset_step(1, True), "T1N1"),
         (cmd_preset_step(2, False), "T2N0"),
         (cmd_band(1, Band.AM), "T1B1"),
-        # Parameter table
-        (cmd_power(1, True), "T1X1"),
-        (cmd_power(2, False), "T2X2"),
+        # Found on a real unit: the manual's X1/X2 with a tuner prefix do
+        # nothing; a bare X1/X0 switches the whole unit.
+        (cmd_power(True), "X1"),
+        (cmd_power(False), "X0"),
     ],
 )
 def test_commands_match_manual(command: str, expected: str) -> None:
@@ -56,8 +57,6 @@ def test_frequency_encoding_edges() -> None:
         encode_frequency(Band.AM, 100)
     with pytest.raises(ValueError):
         cmd_recall_preset(1, Band.FM, 31)
-    with pytest.raises(ValueError):
-        cmd_power(3, True)
 
 
 def test_parse_manual_example() -> None:

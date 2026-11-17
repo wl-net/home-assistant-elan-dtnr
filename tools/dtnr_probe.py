@@ -2,18 +2,18 @@
 """Talk to an ELAN DTNR directly, to check the wiring and the protocol.
 
     dtnr_probe.py socket://127.0.0.1:2001            # query both tuners, then prompt
-    dtnr_probe.py socket://127.0.0.1:2001 T1X1 Q1    # send commands, show replies
+    dtnr_probe.py socket://127.0.0.1:2001 X0 Q1 Q2   # send commands, show replies
     dtnr_probe.py /dev/ttyUSB0                       # local port (needs pyserial)
 
 Each command is sent with a carriage return; everything the tuner sends back
 within a second is printed raw and, where it is a status line, decoded.
+Disable the Home Assistant integration while probing through its bridge, or
+the two would take each other's replies.
 
-Things worth checking on a real unit (the manual leaves them open):
-  * T1X2 / T1X1 switch tuner 1 off / on, and Q1 then answers X0 while off.
+Found on a real unit: a bare X1/X0 switches the whole unit (T1X1, T1X2, T1X0
+and X2 do nothing), and it sends no status on its own. Still open:
   * T1L05 *stores* preset 5 (main table) rather than recalling it
     (the manual's shortcut table says the latter).
-  * Whether the tuner sends status on its own after a command or a
-    front-panel change (the integration uses it if so).
 """
 
 from __future__ import annotations

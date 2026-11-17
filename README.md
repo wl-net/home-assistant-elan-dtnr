@@ -6,11 +6,13 @@ tuner through a local serial port, or through a TCP serial bridge
 (`socket://host:port`), such as an stunnel client, ser2net or an ESP serial
 server.
 
-Each tuner becomes its own device with:
+The unit is a device with its power switch, and each tuner a device of its own
+under it:
 
 | Entity | What it does |
 | --- | --- |
-| `media_player.<name>_tuner_N` | On/off; **source** = band (AM/FM); next/previous = preset up/down; `play_media` tunes (see below). Title shows the station (`106.3 FM`), channel shows the preset. |
+| `switch.<name>_power` | The unit's power. The DTNR has no per-tuner power: on and off switch both tuners. |
+| `media_player.<name>_tuner_N` | **source** = band (AM/FM); next/previous = preset up/down; `play_media` tunes (see below). Playing while the unit is on, off while it's off. Title shows the station (`106.3 FM`), channel shows the preset. |
 | `number.…_fm_frequency` / `number.…_am_frequency` | Current frequency on that band (last-known while on the other band). Setting one switches band and tunes. |
 | `select.…_preset` | Recall preset 1–30 on the current band. |
 | `button.…_seek_up/down`, `button.…_step_up/down` | Seek to the next station, or step one channel (0.2 MHz FM). |
@@ -20,11 +22,13 @@ There's also an action, `elan_dtnr.store_preset`, which stores the station a
 tuner is on into preset 1–30. It overwrites the tuner's preset memory, so it's
 off unless switched on with `FEATURES` (see [Optional features](#optional-features)).
 
-Any command sent to a tuner that's off switches it on first, and waits until
-the tuner reports itself on. Storing a preset is the exception: it's refused
-while the tuner is off. The integration polls every 10 s and re-reads a tuner
-right after each command. If the DTNR sends status lines on its own, it uses
-those too.
+Any command sent while the unit is off switches it on first, which brings both
+tuners on, and waits until it reports itself on. Storing a preset is the
+exception: it's refused while the unit is off. The integration polls every
+10 s and re-reads a tuner right after each command. A real DTNR doesn't report
+front-panel changes by itself, so they show up at the next poll, and a seek
+shows only where it stopped. (If a unit does send status lines on its own, the
+integration uses them.)
 
 ## Connecting the tuner
 
@@ -146,9 +150,13 @@ A standalone script (pyserial only for local ports) that sends raw commands
 and prints the replies, decoded where possible:
 
 ```sh
-python3 tools/dtnr_probe.py socket://127.0.0.1:2001          # Q1, Q2, then a prompt
-python3 tools/dtnr_probe.py socket://127.0.0.1:2001 T1X2 Q1  # tuner 1 off, then ask
+python3 tools/dtnr_probe.py socket://127.0.0.1:2001            # Q1, Q2, then a prompt
+python3 tools/dtnr_probe.py socket://127.0.0.1:2001 X0 Q1 Q2   # the unit off, then ask both
 ```
+
+Disable the integration first (the ⋮ menu on its entry, in Devices &
+services): a forking bridge would hand the serial port to both, and they'd
+take each other's replies.
 
 ## Protocol notes and open questions
 
@@ -157,18 +165,20 @@ The protocol is from the DTNR Installation & User Manual, "RS232 Protocol":
 `T1B2P00F1067S00` or `X0` when the tuner is off. FM is 4 digits in 100 kHz
 units, AM is 4 digits in kHz.
 
-These haven't been confirmed on a real unit yet. The probe script answers each
-of them:
+Checked on a real unit (November 2026):
 
-1. **Power.** The manual gives `X1`/`X2` but no example with a tuner prefix.
-   The integration sends `T1X1`/`T1X2`.
-2. **`L`.** The parameter table and the example `T1B2F0971L02` say `L`
-   *stores* a preset. The shortcut table says `T1L15` *selects* preset 15. The
-   integration uses `P` to recall and `F…L` to store, following the parameter
-   table.
-3. **Unsolicited status.** Unknown whether the DTNR reports front-panel
-   changes by itself. If it does, they show up immediately; if not, they show
-   up within 10 s.
+- **Power is the unit's.** A bare `X1` switches both tuners on and `X0` both
+  off; `Q1` and `Q2` then both answer `X0`. `T1X1`, `T1X2`, `T1X0` and the
+  manual's `X2` do nothing.
+- **No unsolicited status.** Front-panel changes show up only when a tuner is
+  asked.
+
+Still open:
+
+- **`L`.** The parameter table and the example `T1B2F0971L02` say `L`
+  *stores* a preset. The shortcut table says `T1L15` *selects* preset 15. The
+  integration uses `P` to recall and `F…L` to store, following the parameter
+  table.
 
 ## Development
 
@@ -179,6 +189,6 @@ python3.14 -m venv .venv
 ```
 
 The tests run the integration end to end against `tests/fake_dtnr.py`, a TCP
-emulator of the documented protocol. That covers config flow, entities,
-actions, reconnects and stunnel-style silent links. It doesn't stand in for the
-real tuner.
+emulator of the documented protocol, with power as a real unit does it. That
+covers config flow, entities, actions, reconnects and stunnel-style silent
+links. It doesn't stand in for the real tuner.

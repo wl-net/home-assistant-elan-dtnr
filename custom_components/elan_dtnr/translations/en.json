@@ -45,6 +45,9 @@
           "stereo": "Stereo"
         }
       }
+    },
+    "switch": {
+      "power": { "name": "Power" }
     }
   },
   "services": {

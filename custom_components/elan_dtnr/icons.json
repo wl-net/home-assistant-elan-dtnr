@@ -22,6 +22,9 @@
           "stereo": "mdi:signal-cellular-3"
         }
       }
+    },
+    "switch": {
+      "power": { "default": "mdi:power" }
     }
   },
   "services": {

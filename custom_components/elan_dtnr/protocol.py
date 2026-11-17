@@ -10,6 +10,9 @@ Wire format (DTNR Installation Manual, "RS232 Protocol"):
   by a carriage return, e.g. ``T1B2F1063\r`` (tuner 1, FM, 106.3 MHz).
 * ``Q1``/``Q2`` query a tuner. The reply looks like ``T1B2P00F1067S00``, or
   ``X0`` when the tuner is switched off.
+* ``X1``/``X0`` switch the whole unit, both tuners, on and off; there's no
+  per-tuner power. Found on a real unit: ``T1X1``, ``T1X2``, ``T1X0`` and the
+  manual's ``X2`` do nothing.
 * FM frequencies are 4 digits in 100 kHz units (``F0971`` = 97.1 MHz). AM
   frequencies are 4 digits in kHz (``F1550`` = 1550 kHz).
 """
@@ -135,10 +138,9 @@ def cmd_query(tuner: int) -> str:
     return f"Q{tuner}"
 
 
-def cmd_power(tuner: int, on: bool) -> str:
-    """Switch a tuner on (X1) or off (X2)."""
-    _check_tuner(tuner)
-    return f"T{tuner}X{1 if on else 2}"
+def cmd_power(on: bool) -> str:
+    """Switch the whole unit, both tuners, on (X1) or off (X0)."""
+    return "X1" if on else "X0"
 
 
 def cmd_band(tuner: int, band: Band) -> str:

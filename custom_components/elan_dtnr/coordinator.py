@@ -77,14 +77,15 @@ class ElanDtnrCoordinator(DataUpdateCoordinator[dict[int, TunerState]]):
         """Send a command built from the tuner's current state, then re-read it.
 
         The state passed to ``build`` is always freshly queried, never the last
-        poll's. With ``power_on`` the tuner is switched on first if needed.
-        ``slow`` adds a later refresh for commands such as seek that take a
-        while.
+        poll's. With ``power_on`` the unit is switched on first if needed,
+        which brings both tuners on. ``slow`` adds a later refresh for commands
+        such as seek that take a while.
         """
+        switched = False
         async with self._lock:
             try:
                 if power_on:
-                    state = await self._async_power(tuner, True)
+                    state, switched = await self._async_power(True, tuner)
                 else:
                     state = await self.client.query(tuner)
                 command = build(state)
@@ -101,32 +102,38 @@ class ElanDtnrCoordinator(DataUpdateCoordinator[dict[int, TunerState]]):
                 fresh = None
             if fresh is not None:
                 self.async_set_updated_data({**self.data, tuner: fresh})
-        if fresh is None:
+        # Switching the unit on brought the other tuner on too.
+        if fresh is None or switched:
             await self.async_request_refresh()
         if slow:
             self._schedule_delayed_refresh()
 
-    async def async_set_power(self, tuner: int, on: bool) -> None:
-        """Switch a tuner on or off, and show it once the tuner reports it."""
+    async def async_set_power(self, on: bool) -> None:
+        """Switch the unit, both tuners, on or off; show it once it reports it."""
         async with self._lock:
             try:
-                state = await self._async_power(tuner, on)
+                await self._async_power(on)
+                states = {tuner: await self.client.query(tuner) for tuner in TUNERS}
             except DTNRError as err:
                 raise HomeAssistantError(f"Error talking to the DTNR: {err}") from err
-            self.async_set_updated_data({**self.data, tuner: state})
+            self.async_set_updated_data({**self.data, **states})
 
-    async def _async_power(self, tuner: int, on: bool) -> TunerState:
-        """Switch a tuner on or off if it isn't already, and wait until it says so.
+    async def _async_power(
+        self, on: bool, tuner: int = TUNERS[0]
+    ) -> tuple[TunerState, bool]:
+        """Switch the unit on or off if it isn't already, and wait until it says so.
 
-        It asks rather than trusting the last poll, since the tuner may have
-        been switched from its front panel or IR since, and it ignores tuning
-        while off. It keeps asking after X1/X2 because the tuner may take a
-        moment to come on, so the first answer can still be X0.
+        Power is the whole unit's (X1/X0 switch both tuners), so asking one
+        tuner tells. It asks rather than trusting the last poll, since the unit
+        may have been switched from its front panel or IR since, and a tuner
+        ignores tuning while off. It keeps asking after X1 because the unit may
+        take a moment to come on, so the first answer can still be X0. Returns
+        that tuner's state, and whether the unit had to be switched.
         """
         state = await self.client.query(tuner)
         if state.power == on:
-            return state
-        await self.client.send(cmd_power(tuner, on))
+            return state, False
+        await self.client.send(cmd_power(on))
         loop = asyncio.get_running_loop()
         deadline = loop.time() + POWER_TIMEOUT
         while True:
@@ -135,10 +142,8 @@ class ElanDtnrCoordinator(DataUpdateCoordinator[dict[int, TunerState]]):
                 break
             await asyncio.sleep(POWER_POLL_INTERVAL)
         if state.power != on:
-            raise HomeAssistantError(
-                f"Tuner {tuner} did not turn {'on' if on else 'off'}"
-            )
-        return state
+            raise HomeAssistantError(f"The DTNR did not turn {'on' if on else 'off'}")
+        return state, True
 
     @callback
     def _schedule_delayed_refresh(self) -> None:

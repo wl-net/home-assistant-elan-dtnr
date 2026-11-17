@@ -62,16 +62,18 @@ async def async_setup_entry(
 
 
 class ElanDtnrMediaPlayer(ElanDtnrEntity, MediaPlayerEntity):
-    """One DTNR tuner."""
+    """One DTNR tuner.
+
+    It has no on/off of its own: power is the whole unit's (the unit's power
+    switch, switch.py), and any command switches the unit on first.
+    """
 
     _attr_name = None
     _attr_device_class = MediaPlayerDeviceClass.RECEIVER
     _attr_media_content_type = MediaType.CHANNEL
     _attr_source_list = [band.name for band in Band]
     _attr_supported_features = (
-        MediaPlayerEntityFeature.TURN_ON
-        | MediaPlayerEntityFeature.TURN_OFF
-        | MediaPlayerEntityFeature.SELECT_SOURCE
+        MediaPlayerEntityFeature.SELECT_SOURCE
         | MediaPlayerEntityFeature.NEXT_TRACK
         | MediaPlayerEntityFeature.PREVIOUS_TRACK
         | MediaPlayerEntityFeature.PLAY_MEDIA
@@ -88,10 +90,15 @@ class ElanDtnrMediaPlayer(ElanDtnrEntity, MediaPlayerEntity):
 
     @property
     def state(self) -> MediaPlayerState | None:
-        """On or off."""
+        """Playing while the unit is on, off while it's off.
+
+        A tuner that's on is always playing its station. Home Assistant also
+        shows previous and next (here preset down and up) only for a player
+        that's playing or paused.
+        """
         if (state := self.tuner_state) is None:
             return None
-        return MediaPlayerState.ON if state.power else MediaPlayerState.OFF
+        return MediaPlayerState.PLAYING if state.power else MediaPlayerState.OFF
 
     @property
     def source(self) -> str | None:
@@ -120,14 +127,6 @@ class ElanDtnrMediaPlayer(ElanDtnrEntity, MediaPlayerEntity):
         if (state := self._on_state) is None:
             return None
         return {"frequency": state.frequency, "preset": state.preset}
-
-    async def async_turn_on(self) -> None:
-        """Switch the tuner on."""
-        await self.coordinator.async_set_power(self.tuner, True)
-
-    async def async_turn_off(self) -> None:
-        """Switch the tuner off."""
-        await self.coordinator.async_set_power(self.tuner, False)
 
     async def async_select_source(self, source: str) -> None:
         """Switch band; the tuner returns to the last station on it."""
@@ -175,7 +174,7 @@ class ElanDtnrMediaPlayer(ElanDtnrEntity, MediaPlayerEntity):
 
         The station comes from a fresh query, not the last poll, since the
         store command also tunes and would otherwise retune to a stale
-        station. A tuner that's off is refused rather than switched on.
+        station. A unit that's off is refused rather than switched on.
         """
 
         def build(state: TunerState) -> str:

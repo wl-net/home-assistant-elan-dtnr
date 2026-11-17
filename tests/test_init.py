@@ -17,9 +17,18 @@ from homeassistant.components.media_player import (
     ATTR_MEDIA_CONTENT_ID,
     ATTR_MEDIA_CONTENT_TYPE,
     ATTR_MEDIA_TITLE,
+    MediaPlayerEntityFeature,
 )
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import ATTR_ENTITY_ID, CONF_DEVICE, STATE_OFF, STATE_ON, STATE_UNAVAILABLE
+from homeassistant.const import (
+    ATTR_ENTITY_ID,
+    ATTR_SUPPORTED_FEATURES,
+    CONF_DEVICE,
+    STATE_OFF,
+    STATE_ON,
+    STATE_PLAYING,
+    STATE_UNAVAILABLE,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import device_registry as dr
@@ -32,6 +41,7 @@ from .fake_dtnr import AM, FM, FakeDTNR
 
 T1 = "media_player.elan_dtnr_tuner_1"
 T2 = "media_player.elan_dtnr_tuner_2"
+POWER = "switch.elan_dtnr_power"
 
 
 @pytest.fixture
@@ -73,7 +83,7 @@ async def test_setup_creates_entities(hass: HomeAssistant, entry: MockConfigEntr
     assert entry.state is ConfigEntryState.LOADED
 
     t1 = hass.states.get(T1)
-    assert t1.state == STATE_ON
+    assert t1.state == STATE_PLAYING
     assert t1.attributes[ATTR_INPUT_SOURCE] == "FM"
     assert t1.attributes[ATTR_MEDIA_TITLE] == "106.3 FM"
     assert hass.states.get(T2).attributes[ATTR_MEDIA_TITLE] == "1550 AM"
@@ -85,6 +95,7 @@ async def test_setup_creates_entities(hass: HomeAssistant, entry: MockConfigEntr
     assert hass.states.get("sensor.elan_dtnr_tuner_2_reception").state == "mono"
     assert hass.states.get("select.elan_dtnr_tuner_1_preset").state == "unknown"
     assert hass.states.get("button.elan_dtnr_tuner_1_seek_up") is not None
+    assert hass.states.get(POWER).state == STATE_ON
 
     devices = dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id)
     assert sorted(d.name for d in devices) == [
@@ -95,48 +106,64 @@ async def test_setup_creates_entities(hass: HomeAssistant, entry: MockConfigEntr
 
 
 async def test_power(hass: HomeAssistant, entry: MockConfigEntry, fake: FakeDTNR) -> None:
-    await _call(hass, "media_player", "turn_off", {ATTR_ENTITY_ID: T1})
-    assert "T1X2" in fake.received
+    """Power is the unit's: X0/X1 switch both tuners."""
+    await _call(hass, "switch", "turn_off", {ATTR_ENTITY_ID: POWER})
+    assert "X0" in fake.received
+    assert hass.states.get(POWER).state == STATE_OFF
     assert hass.states.get(T1).state == STATE_OFF
+    assert hass.states.get(T2).state == STATE_OFF
     assert hass.states.get("sensor.elan_dtnr_tuner_1_reception").state == "unknown"
     # The last FM frequency is still shown while off.
     assert hass.states.get("number.elan_dtnr_tuner_1_fm_frequency").state == "106.3"
 
-    await _call(hass, "media_player", "turn_on", {ATTR_ENTITY_ID: T1})
-    assert "T1X1" in fake.received
-    assert hass.states.get(T1).state == STATE_ON
+    await _call(hass, "switch", "turn_on", {ATTR_ENTITY_ID: POWER})
+    assert "X1" in fake.received
+    assert hass.states.get(POWER).state == STATE_ON
+    assert hass.states.get(T1).state == STATE_PLAYING
+    assert hass.states.get(T2).state == STATE_PLAYING
+    # Never the per-tuner form, which a real unit ignores.
+    assert not any(c.startswith("T") and "X" in c for c in fake.received)
 
 
-async def test_turn_on_waits_for_slow_tuner(
+async def test_tuners_have_no_power_of_their_own(
+    hass: HomeAssistant, entry: MockConfigEntry
+) -> None:
+    supported = hass.states.get(T1).attributes[ATTR_SUPPORTED_FEATURES]
+    assert not supported & MediaPlayerEntityFeature.TURN_ON
+    assert not supported & MediaPlayerEntityFeature.TURN_OFF
+    assert supported & MediaPlayerEntityFeature.NEXT_TRACK
+
+
+async def test_power_on_waits_for_slow_unit(
     hass: HomeAssistant, entry: MockConfigEntry, fake: FakeDTNR
 ) -> None:
-    """A tuner can still answer X0 just after X1; that mustn't show as off."""
-    fake.tuners[1].power = False
+    """The unit can still answer X0 just after X1; that mustn't show as off."""
+    fake.set_power(False)
     fake.power_on_delay = 0.2
     await _advance(hass, 11)
     assert hass.states.get(T1).state == STATE_OFF
 
-    await _call(hass, "media_player", "turn_on", {ATTR_ENTITY_ID: T1})
-    assert "T1X1" in fake.received
-    assert hass.states.get(T1).state == STATE_ON
+    await _call(hass, "switch", "turn_on", {ATTR_ENTITY_ID: POWER})
+    assert "X1" in fake.received
+    assert hass.states.get(T1).state == STATE_PLAYING
     assert hass.states.get(T1).attributes[ATTR_MEDIA_TITLE] == "106.3 FM"
 
 
-async def test_turn_on_gives_up(
+async def test_power_on_gives_up(
     hass: HomeAssistant, entry: MockConfigEntry, fake: FakeDTNR
 ) -> None:
-    fake.tuners[1].power = False
+    fake.set_power(False)
     fake.power_on_delay = 60
     with pytest.raises(HomeAssistantError, match="did not turn on"):
         await hass.services.async_call(
-            "media_player", "turn_on", {ATTR_ENTITY_ID: T1}, blocking=True
+            "switch", "turn_on", {ATTR_ENTITY_ID: POWER}, blocking=True
         )
 
 
 async def test_play_media_powers_on_and_tunes(
     hass: HomeAssistant, entry: MockConfigEntry, fake: FakeDTNR
 ) -> None:
-    fake.tuners[1].power = False
+    fake.set_power(False)
     fake.power_on_delay = 0.2  # tuning before it's on would be ignored
     await _call(
         hass,
@@ -144,13 +171,15 @@ async def test_play_media_powers_on_and_tunes(
         "play_media",
         {ATTR_ENTITY_ID: T1, ATTR_MEDIA_CONTENT_TYPE: "channel", ATTR_MEDIA_CONTENT_ID: "AM 680"},
     )
-    assert "T1X1" in fake.received
+    assert "X1" in fake.received
     assert "T1B1F0680" in fake.received
     state = hass.states.get(T1)
-    assert state.state == STATE_ON
+    assert state.state == STATE_PLAYING
     assert state.attributes[ATTR_MEDIA_TITLE] == "680 AM"
     assert state.attributes[ATTR_INPUT_SOURCE] == "AM"
     assert hass.states.get("number.elan_dtnr_tuner_1_am_frequency").state == "680.0"
+    # Switching the unit on brought tuner 2 on too.
+    assert hass.states.get(T2).state == STATE_PLAYING
 
 
 async def test_play_media_rejects_garbage(hass: HomeAssistant, entry: MockConfigEntry) -> None:
@@ -202,7 +231,7 @@ def test_features_parsing(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 async def test_store_preset_off_by_default(hass: HomeAssistant, entry: MockConfigEntry) -> None:
-    assert hass.states.get(T1).state == STATE_ON
+    assert hass.states.get(T1).state == STATE_PLAYING
     assert not hass.services.has_service(DOMAIN, "store_preset")
 
 
@@ -220,7 +249,7 @@ async def test_store_preset_uses_current_station(
 async def test_store_preset_refuses_when_off(
     hass: HomeAssistant, store_preset_enabled: None, entry: MockConfigEntry, fake: FakeDTNR
 ) -> None:
-    fake.tuners[1].power = False  # switched off since the last poll
+    fake.set_power(False)  # switched off since the last poll
     with pytest.raises(ServiceValidationError, match="must be on"):
         await hass.services.async_call(
             DOMAIN, "store_preset", {ATTR_ENTITY_ID: T1, "preset": 3}, blocking=True
@@ -258,7 +287,7 @@ async def test_unavailable_then_recovers(
     fake.mute = False
     await fake.drop_clients()
     await _advance(hass, 22)
-    assert hass.states.get(T1).state == STATE_ON
+    assert hass.states.get(T1).state == STATE_PLAYING
 
 
 async def test_unsolicited_updates(
