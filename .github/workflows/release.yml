@@ -23,17 +23,17 @@ jobs:
           .venv/bin/pip install pytest-homeassistant-custom-component serialx
           .venv/bin/pytest
 
-      - name: Stamp the tag into manifest.json and build the zip
+      - name: Check the tag matches manifest.json
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          python - "$version" <<'PY'
+          python - "${GITHUB_REF_NAME#v}" <<'PY'
           import json, sys
-          path = "custom_components/elan_dtnr/manifest.json"
-          manifest = json.load(open(path))
-          manifest["version"] = sys.argv[1]
-          json.dump(manifest, open(path, "w"), indent=2)
-          open(path, "a").write("\n")
+          version = json.load(open("custom_components/elan_dtnr/manifest.json"))["version"]
+          if version != sys.argv[1]:
+              sys.exit(f"Tag is {sys.argv[1]} but manifest.json says {version}: bump the manifest, commit, and retag.")
           PY
+
+      - name: Build the zip
+        run: |
           cd custom_components/elan_dtnr
           zip -r ../../elan_dtnr.zip . -x "__pycache__/*" "*.pyc"
 
